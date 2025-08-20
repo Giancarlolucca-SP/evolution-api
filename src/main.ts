@@ -1,7 +1,7 @@
 // Import this first from sentry instrument!
 import '@utils/instrumentSentry';
 
-// Now import other modules
+// Agora os outros módulos
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
 import { HttpStatus, router } from '@api/routes/index.router';
@@ -64,13 +64,14 @@ async function bootstrap() {
 
   app.use('/', router);
 
+  // Middleware de erros
   app.use(
     (err: Error, req: Request, res: Response, next: NextFunction) => {
       if (err) {
         const webhook = configService.get<Webhook>('WEBHOOK');
 
-        if (webhook.EVENTS.ERRORS_WEBHOOK && webhook.EVENTS.ERRORS_WEBHOOK != '' && webhook.EVENTS.ERRORS) {
-          const tzoffset = new Date().getTimezoneOffset() * 60000; //offset in milliseconds
+        if (webhook.EVENTS.ERRORS_WEBHOOK && webhook.EVENTS.ERRORS_WEBHOOK != '' && webhook.EVENTS) {
+          const tzoffset = new Date().getTimezoneOffset() * 60000;
           const localISOTime = new Date(Date.now() - tzoffset).toISOString();
           const now = localISOTime;
           const globalApiKey = configService.get<Auth>('AUTHENTICATION').API_KEY.KEY;
@@ -140,18 +141,38 @@ async function bootstrap() {
 
   eventManager.init(server);
 
+  // Endpoint de healthcheck — necessário no Render
+  app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
+  // Porta e host: Render injeta process.env.PORT
+  const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
+  const HOST = process.env.HOST ?? '0.0.0.0';
+
   if (process.env.SENTRY_DSN) {
     logger.info('Sentry - ON');
-
-    // Add this after all routes,
-    // but before any and other error-handling middlewares are defined
     Sentry.setupExpressErrorHandler(app);
   }
 
-  server.listen(httpServer.PORT, () => logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT));
+  server.listen(PORT, HOST, () => {
+    logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${HOST}:${PORT}`);
+  });
+
+  // Graceful shutdown para Render
+  process.on('SIGTERM', () => {
+    logger.warn('SIGTERM received — shutting down gracefully');
+    try {
+      server.close(() => {
+        logger.info('HTTP server closed');
+        process.exit(0);
+      });
+      setTimeout(() => process.exit(0), 10_000).unref();
+    } catch (e) {
+      logger.error('Error on graceful shutdown', e as any);
+      process.exit(1);
+    }
+  });
 
   initWA();
-
   onUnexpectedError();
 }
 
