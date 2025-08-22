@@ -153,9 +153,14 @@ async function bootstrap() {
     Sentry.setupExpressErrorHandler(app);
   }
 
-  server.listen(PORT, HOST, () => {
-    logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${HOST}:${PORT}`);
-  });
+// ✅ Aceita 1 argumento
+server.listen(httpServer.PORT);
+
+// (opcional) log separado quando o servidor iniciar
+server.on?.('listening', () => {
+  logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+});
+
 
   // Graceful shutdown para Render
   process.on('SIGTERM', () => {
