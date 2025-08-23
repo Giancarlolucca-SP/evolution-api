@@ -59,18 +59,27 @@ async function bootstrap() {
   app.set('view engine', 'hbs');
   app.set('views', join(ROOT_DIR, 'views'));
   app.use(express.static(join(ROOT_DIR, 'public')));
-
   app.use('/store', express.static(join(ROOT_DIR, 'store')));
 
+  // Rotas principais
   app.use('/', router);
 
-  // Middleware de erros
+  // Healthcheck exigido pelo Render (tem que responder 200)
+  app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
+  // Sentry error handler — deve vir depois das rotas e antes dos seus error middlewares
+  if (process.env.SENTRY_DSN) {
+    logger.info('Sentry - ON');
+    Sentry.setupExpressErrorHandler(app);
+  }
+
+  // Seus middlewares de erro e 404
   app.use(
-    (err: Error, req: Request, res: Response, next: NextFunction) => {
+    (err: Error, _req: Request, res: Response, next: NextFunction) => {
       if (err) {
         const webhook = configService.get<Webhook>('WEBHOOK');
 
-        if (webhook.EVENTS.ERRORS_WEBHOOK && webhook.EVENTS.ERRORS_WEBHOOK != '' && webhook.EVENTS) {
+        if (webhook.EVENTS.ERRORS_WEBHOOK && webhook.EVENTS.ERRORS_WEBHOOK !== '' && webhook.EVENTS) {
           const tzoffset = new Date().getTimezoneOffset() * 60000;
           const localISOTime = new Date(Date.now() - tzoffset).toISOString();
           const now = localISOTime;
@@ -80,11 +89,11 @@ async function bootstrap() {
           const errorData = {
             event: 'error',
             data: {
-              error: err['error'] || 'Internal Server Error',
-              message: err['message'] || 'Internal Server Error',
-              status: err['status'] || 500,
+              error: (err as any)['error'] || 'Internal Server Error',
+              message: err.message || 'Internal Server Error',
+              status: (err as any)['status'] || 500,
               response: {
-                message: err['message'] || 'Internal Server Error',
+                message: err.message || 'Internal Server Error',
               },
             },
             date_time: now,
@@ -96,15 +105,14 @@ async function bootstrap() {
 
           const baseURL = webhook.EVENTS.ERRORS_WEBHOOK;
           const httpService = axios.create({ baseURL });
-
-          httpService.post('', errorData);
+          httpService.post('', errorData).catch(() => void 0);
         }
 
-        return res.status(err['status'] || 500).json({
-          status: err['status'] || 500,
-          error: err['error'] || 'Internal Server Error',
+        return res.status((err as any)['status'] || 500).json({
+          status: (err as any)['status'] || 500,
+          error: (err as any)['error'] || 'Internal Server Error',
           response: {
-            message: err['message'] || 'Internal Server Error',
+            message: err.message || 'Internal Server Error',
           },
         });
       }
@@ -113,7 +121,6 @@ async function bootstrap() {
     },
     (req: Request, res: Response, next: NextFunction) => {
       const { method, url } = req;
-
       res.status(HttpStatus.NOT_FOUND).json({
         status: HttpStatus.NOT_FOUND,
         error: 'Not Found',
@@ -121,52 +128,44 @@ async function bootstrap() {
           message: [`Cannot ${method.toUpperCase()} ${url}`],
         },
       });
-
       next();
     },
   );
 
   const httpServer = configService.get<HttpServer>('SERVER');
 
+  // Cria o server (HTTP/HTTPS) via helper
   ServerUP.app = app;
   let server = ServerUP[httpServer.TYPE];
 
+  // Se SSL falhar, cai pra HTTP
   if (server === null) {
     logger.warn('SSL cert load failed — falling back to HTTP.');
     logger.info("Ensure 'SSL_CONF_PRIVKEY' and 'SSL_CONF_FULLCHAIN' env vars point to valid certificate files.");
-
     httpServer.TYPE = 'http';
     server = ServerUP[httpServer.TYPE];
   }
 
+  // Ajusta a porta para usar a do Render (se existir)
+  const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
+  httpServer.PORT = PORT;
+
+  // Inicializa gerenciador de eventos
   eventManager.init(server);
 
-  // Endpoint de healthcheck — necessário no Render
-  app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+  // IMPORTANTE: listen com **apenas 1 argumento** (evita TS2554)
+  server.listen(httpServer.PORT);
 
-  // Porta e host: Render injeta process.env.PORT
-  const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
-  const HOST = process.env.HOST ?? '0.0.0.0';
+  // Log quando o servidor estiver de pé
+  server.on?.('listening', () => {
+    logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+  });
 
-  if (process.env.SENTRY_DSN) {
-    logger.info('Sentry - ON');
-    Sentry.setupExpressErrorHandler(app);
-  }
-
-// ✅ Aceita 1 argumento
-server.listen(httpServer.PORT);
-
-// (opcional) log separado quando o servidor iniciar
-server.on?.('listening', () => {
-  logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
-});
-
-
-  // Graceful shutdown para Render
+  // Encerramento gracioso (Render envia SIGTERM em deploy/scale)
   process.on('SIGTERM', () => {
     logger.warn('SIGTERM received — shutting down gracefully');
     try {
-      server.close(() => {
+      server.close?.(() => {
         logger.info('HTTP server closed');
         process.exit(0);
       });
