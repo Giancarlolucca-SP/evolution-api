@@ -153,13 +153,12 @@ async function bootstrap() {
   // Inicializa gerenciador de eventos
   eventManager.init(server);
 
-  // IMPORTANTE: listen com **apenas 1 argumento** (evita TS2554)
-  server.listen(httpServer.PORT);
+ server.listen(httpServer.PORT); // apenas 1 argumento
 
-  // Log quando o servidor estiver de pé
-  server.on?.('listening', () => {
-    logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
-  });
+server.on?.('listening', () => {
+  logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+});
+
 
   // Encerramento gracioso (Render envia SIGTERM em deploy/scale)
   process.on('SIGTERM', () => {
