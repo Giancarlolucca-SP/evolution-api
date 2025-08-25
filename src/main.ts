@@ -69,7 +69,7 @@ async function bootstrap() {
     Sentry.setupExpressErrorHandler(app);
   }
 
-  // Seus middlewares de erro e 404
+  // Middleware de erros
   app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
     if (err) {
       const webhook = configService.get<Webhook>('WEBHOOK');
@@ -109,6 +109,7 @@ async function bootstrap() {
     next();
   });
 
+  // 404
   app.use((req: Request, res: Response, next: NextFunction) => {
     const { method, url } = req;
     res.status(HttpStatus.NOT_FOUND).json({
@@ -137,20 +138,15 @@ async function bootstrap() {
   const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
   httpServer.PORT = PORT;
 
-
-
   // Inicializa gerenciador de eventos
   eventManager.init(server);
 
-server.listen(httpServer.PORT);
-logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+  // ⚠️ Importante: apenas 1 argumento no listen (evita TS2554)
+  server.listen(httpServer.PORT);
 
-
-  // ✅ Faça o log em uma linha separada (sem usar .on)
-  logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
-
-
-
+  // Log de subida (fora do listen)
+  const upMsg = `${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`;
+  logger.log(upMsg);
 
   // Encerramento gracioso (Render envia SIGTERM em deploy/scale)
   process.on('SIGTERM', () => {
