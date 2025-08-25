@@ -137,14 +137,19 @@ async function bootstrap() {
   const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
   httpServer.PORT = PORT;
 
+
+
   // Inicializa gerenciador de eventos
   eventManager.init(server);
 
-  // 🔴 IMPORTANTE: listen com **apenas 1 argumento**
+  // ✅ Chame listen com APENAS 1 argumento
   server.listen(httpServer.PORT);
 
-  // Log simples após o listen (sem usar .on)
+  // ✅ Faça o log em uma linha separada (sem usar .on)
   logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+
+
+
 
   // Encerramento gracioso (Render envia SIGTERM em deploy/scale)
   process.on('SIGTERM', () => {
