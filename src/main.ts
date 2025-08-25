@@ -142,8 +142,9 @@ async function bootstrap() {
   // Inicializa gerenciador de eventos
   eventManager.init(server);
 
-  // ✅ Chame listen com APENAS 1 argumento
-  server.listen(httpServer.PORT);
+server.listen(httpServer.PORT);
+logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
+
 
   // ✅ Faça o log em uma linha separada (sem usar .on)
   logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT);
