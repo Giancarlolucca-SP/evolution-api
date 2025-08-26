@@ -26,22 +26,13 @@ async function bootstrap() {
   const logger = new Logger('SERVER');
   const app = express();
 
-  let providerFiles: ProviderFiles = null;
-  if (configService.get<ProviderSession>('PROVIDER').ENABLED) {
-    providerFiles = new ProviderFiles(configService);
-    await providerFiles.onModuleInit();
-    logger.info('Provider:Files - ON');
-  }
-
-  const prismaRepository = new PrismaRepository(configService);
-  await prismaRepository.onModuleInit();
-
+  // Middlewares base
   app.use(
     cors({
       origin(requestOrigin, callback) {
         const { ORIGIN } = configService.get<Cors>('CORS');
         if (ORIGIN.includes('*')) return callback(null, true);
-        if (ORIGIN.indexOf(requestOrigin) !== -1) return callback(null, true);
+        if (requestOrigin && ORIGIN.indexOf(requestOrigin) !== -1) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
       },
       methods: [...configService.get<Cors>('CORS').METHODS],
@@ -60,20 +51,21 @@ async function bootstrap() {
   // Rotas principais
   app.use('/', router);
 
-  // Healthcheck exigido pelo Render (tem que responder 200)
+  // Healthcheck exigido pelo Render
   app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-  // Sentry error handler — depois das rotas e antes dos seus error middlewares
+  // Sentry error handler — depois das rotas, antes dos seus error middlewares
   if (process.env.SENTRY_DSN) {
     logger.info('Sentry - ON');
     Sentry.setupExpressErrorHandler(app);
   }
 
-  // Middleware de erros
-  app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
-    if (err) {
-      const webhook = configService.get<Webhook>('WEBHOOK');
+  // Middleware de erro
+  app.use(async (err: Error, _req: Request, res: Response, next: NextFunction) => {
+    if (!err) return next();
 
+    const webhook = configService.get<Webhook>('WEBHOOK');
+    try {
       if (webhook.EVENTS.ERRORS_WEBHOOK && webhook.EVENTS.ERRORS_WEBHOOK !== '' && webhook.EVENTS) {
         const tzoffset = new Date().getTimezoneOffset() * 60000;
         const localISOTime = new Date(Date.now() - tzoffset).toISOString();
@@ -84,9 +76,9 @@ async function bootstrap() {
         const errorData = {
           event: 'error',
           data: {
-            error: (err as any)['error'] || 'Internal Server Error',
+            error: (err as any).error || 'Internal Server Error',
             message: err.message || 'Internal Server Error',
-            status: (err as any)['status'] || 500,
+            status: (err as any).status || 500,
             response: { message: err.message || 'Internal Server Error' },
           },
           date_time: now,
@@ -95,21 +87,20 @@ async function bootstrap() {
         };
 
         logger.error(errorData);
-        const httpService = axios.create({ baseURL: webhook.EVENTS.ERRORS_WEBHOOK });
-        httpService.post('', errorData).catch(() => void 0);
+        await axios.create({ baseURL: webhook.EVENTS.ERRORS_WEBHOOK }).post('', errorData);
       }
-
-      return res.status((err as any)['status'] || 500).json({
-        status: (err as any)['status'] || 500,
-        error: (err as any)['error'] || 'Internal Server Error',
-        response: { message: err.message || 'Internal Server Error' },
-      });
+    } catch {
+      // não deixa o webhook derrubar a resposta
     }
 
-    next();
+    return res.status((err as any).status || 500).json({
+      status: (err as any).status || 500,
+      error: (err as any).error || 'Internal Server Error',
+      response: { message: err.message || 'Internal Server Error' },
+    });
   });
 
-  // 404
+  // 404 handler
   app.use((req: Request, res: Response, next: NextFunction) => {
     const { method, url } = req;
     res.status(HttpStatus.NOT_FOUND).json({
@@ -120,13 +111,24 @@ async function bootstrap() {
     next();
   });
 
-  const httpServer = configService.get<HttpServer>('SERVER');
+  // Provider de arquivos (opcional)
+  let providerFiles: ProviderFiles | null = null;
+  if (configService.get<ProviderSession>('PROVIDER').ENABLED) {
+    providerFiles = new ProviderFiles(configService);
+    await providerFiles.onModuleInit();
+    logger.info('Provider:Files - ON');
+  }
 
-  // Cria o server (HTTP/HTTPS) via helper
+  // Prisma
+  const prismaRepository = new PrismaRepository(configService);
+  await prismaRepository.onModuleInit();
+
+  // Server (HTTP/HTTPS) via helper
+  const httpServer = configService.get<HttpServer>('SERVER');
   ServerUP.app = app;
   let server = ServerUP[httpServer.TYPE];
 
-  // Se SSL falhar, cai pra HTTP
+  // Se SSL falhar, cai para HTTP
   if (server === null) {
     logger.warn('SSL cert load failed — falling back to HTTP.');
     logger.info("Ensure 'SSL_CONF_PRIVKEY' and 'SSL_CONF_FULLCHAIN' env vars point to valid certificate files.");
@@ -134,21 +136,24 @@ async function bootstrap() {
     server = ServerUP[httpServer.TYPE];
   }
 
-  // Ajusta a porta para usar a do Render (se existir)
+  // Porta do Render (se houver)
   const PORT = Number(process.env.PORT ?? httpServer.PORT ?? 8080);
   httpServer.PORT = PORT;
 
-  // Inicializa gerenciador de eventos
-  eventManager.init(server);
+  // Inicializa gerenciador de eventos (se existir)
+  try {
+    eventManager?.init?.(server);
+  } catch (e) {
+    logger.warn('eventManager init skipped: ' + (e as any)?.message);
+  }
 
   // ⚠️ Importante: apenas 1 argumento no listen (evita TS2554)
   server.listen(httpServer.PORT);
 
-  // Log de subida (fora do listen)
-  const upMsg = `${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`;
-  logger.log(upMsg);
+  // Log separado
+  logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`);
 
-  // Encerramento gracioso (Render envia SIGTERM em deploy/scale)
+  // Encerramento gracioso
   process.on('SIGTERM', () => {
     logger.warn('SIGTERM received — shutting down gracefully');
     try {
