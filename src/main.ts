@@ -147,11 +147,16 @@ async function bootstrap() {
     logger.warn('eventManager init skipped: ' + (e as any)?.message);
   }
 
-  // ⚠️ Importante: apenas 1 argumento no listen (evita TS2554)
-  server.listen(httpServer.PORT);
+// ❌ NÃO pode (2 argumentos)
+// server.listen(httpServer.PORT, () => logger.log(...));
+// server.listen(httpServer.PORT, '0.0.0.0');
 
-  // Log separado
-  logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`);
+// ✅ Correto (1 argumento)
+server.listen(httpServer.PORT);
+
+// faça o log fora do listen:
+logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`);
+
 
   // Encerramento gracioso
   process.on('SIGTERM', () => {
