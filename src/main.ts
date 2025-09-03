@@ -32,7 +32,9 @@ async function bootstrap() {
       origin(requestOrigin, callback) {
         const { ORIGIN } = configService.get<Cors>('CORS');
         if (ORIGIN.includes('*')) return callback(null, true);
-        if (requestOrigin && ORIGIN.indexOf(requestOrigin) !== -1) return callback(null, true);
+        // requestOrigin pode ser undefined em requisições sem Origin (ex: curl/healthz)
+        if (!requestOrigin) return callback(null, true);
+        if (ORIGIN.indexOf(requestOrigin) !== -1) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
       },
       methods: [...configService.get<Cors>('CORS').METHODS],
@@ -147,16 +149,11 @@ async function bootstrap() {
     logger.warn('eventManager init skipped: ' + (e as any)?.message);
   }
 
-// ❌ NÃO pode (2 argumentos)
-// server.listen(httpServer.PORT, () => logger.log(...));
-// server.listen(httpServer.PORT, '0.0.0.0');
+  // ❗ Chamada correta: apenas 1 argumento (evita TS2554)
+  server.listen(httpServer.PORT);
 
-// ✅ Correto (1 argumento)
-server.listen(httpServer.PORT);
-
-// faça o log fora do listen:
-logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`);
-
+  // Log separado (fora do listen)
+  logger.log(`${httpServer.TYPE.toUpperCase()} - ON: ${httpServer.PORT}`);
 
   // Encerramento gracioso
   process.on('SIGTERM', () => {
