@@ -1,3 +1,4 @@
+
 // Import this first from sentry instrument!
 import '@utils/instrumentSentry';
 
@@ -32,7 +33,6 @@ async function bootstrap() {
       origin(requestOrigin, callback) {
         const { ORIGIN } = configService.get<Cors>('CORS');
         if (ORIGIN.includes('*')) return callback(null, true);
-        // requestOrigin pode ser undefined em requisições sem Origin (ex: curl/healthz)
         if (!requestOrigin) return callback(null, true);
         if (ORIGIN.indexOf(requestOrigin) !== -1) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
